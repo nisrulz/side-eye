@@ -1,5 +1,7 @@
 # Side Eye 😒
 
+![Header](img/github_banner.webp)
+
 > Give a project the side-eye before you trust it.
 
 side-eye shows you what would run code on your machine when you clone, open, install, or build a project. It reads files. It never runs `git`, a build, a hook, or a script from the repository it is scanning.
