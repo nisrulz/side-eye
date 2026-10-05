@@ -48,7 +48,11 @@ make scan ARGS="~/Downloads/project-main.zip"
 
 ## Release
 
-`scripts/release.sh <X.Y.Z>` tags the current commit and pushes the tag.
+```bash
+make release VERSION=1.0.0
+```
+
+That runs `check` first, then `scripts/release.sh <X.Y.Z>`, which tags the current commit and pushes the tag.
 The tag push triggers the [GitHub Actions release workflow](../.github/workflows/release.yml).
 The workflow runs GoReleaser with [`.goreleaser.yaml`](../.goreleaser.yaml) to build amd64 and arm64 binaries for macOS, Linux, and Windows, publish a GitHub Release with `checksums.txt`, and attach [`scripts/install.sh`](../scripts/install.sh).
 It then records build provenance for the archives and the checksum file.

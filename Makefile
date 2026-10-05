@@ -2,7 +2,7 @@ BINARY  := side-eye
 GOFLAGS := -buildvcs=false -trimpath
 LDFLAGS := -s -w
 
-.PHONY: help install test check scan
+.PHONY: help install test check scan release
 
 help: ## Show all commands
 	@printf '→ side-eye make commands\n\n'
@@ -15,7 +15,9 @@ help: ## Show all commands
 	@printf '    # For a full GitHub repo URL\n'
 	@printf '    make scan ARGS="https://github.com/example/project"\n\n'
 	@printf '    # For a ZIP file\n'
-	@printf '    make scan ARGS="~/Downloads/project-main.zip"\n'
+	@printf '    make scan ARGS="~/Downloads/project-main.zip"\n\n'
+	@printf '    # For a release\n'
+	@printf '    make release VERSION=1.0.0\n'
 
 install: ## Build the latest code and install the CLI to ~/go/bin for use anywhere
 	@printf '→ Installing %s\n' $(BINARY)
@@ -47,6 +49,15 @@ check: ## Format, vet, and test
 	@printf '→ Running end-to-end tests\n'
 	@go test $(GOFLAGS) ./tests/e2e/...
 	@printf '✓ Tests passed\n'
+
+release: ## Tag and push a release, which starts the release workflow (VERSION="1.0.0")
+	@if [ -z "$(VERSION)" ]; then \
+		printf '✗ Set the version: make release VERSION=1.0.0\n' >&2; \
+		exit 2; \
+	fi
+	@$(MAKE) --no-print-directory check
+	@printf '→ Releasing %s\n' "$(VERSION)"
+	@./scripts/release.sh $(VERSION)
 
 scan: ## Scan a directory, GitHub repo, or ZIP (ARGS="...")
 	@printf '→ Scanning %s\n' "$(if $(ARGS),$(ARGS),.)"
