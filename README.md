@@ -2,7 +2,7 @@
 
 > Give a project the side-eye before you trust it.
 
-side-eye scans for code that runs when you clone, open, install, or build. It reads files only and never executes git, a build, or a hook.
+side-eye shows you what would run code on your machine when you clone, open, install, or build a project. It reads files. It never runs `git`, a build, a hook, or a script from the repository it is scanning.
 
 ## Install
 
@@ -10,41 +10,36 @@ side-eye scans for code that runs when you clone, open, install, or build. It re
 curl -sfL https://github.com/nisrulz/side-eye/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the release archive against a SHA-256 checksum before it installs `side-eye` to `~/go/bin`, then adds that directory to your PATH if it is not there already. No Go needed.
+The installer checks the release against a SHA-256 checksum, installs `side-eye` to `~/go/bin`, and adds that directory to your PATH if it is missing. No Go toolchain needed.
 
-To build from source, see the [development docs](docs/development.md).
+Building from source is covered in the [development docs](docs/development.md).
 
 ## Usage
 
-With no argument, side-eye scans the current directory. Change into a project and run it:
+Scan the project you are standing in:
 
 ```bash
 cd ~/example/project
 side-eye
 ```
 
-You can also pass a target:
+Or point it at a target:
 
 ```bash
-# Scan a directory, git repository or not
-side-eye ~/example/project
-
-# Scan a repo by URL, no clone
-side-eye https://github.com/example/project
-
-# Scan a ZIP downloaded from GitHub or shared by someone else
-side-eye ~/Downloads/project-main.zip
+side-eye ~/example/project              # a directory, with or without git
+side-eye https://github.com/example/project  # a repository URL, without cloning it
+side-eye ~/Downloads/project-main.zip  # a ZIP from GitHub or shared by someone
 ```
 
-A directory without `.git` is scanned for the files that run code on open or install, such as `.vscode/tasks.json`, `package.json` install scripts, and tracked hook directories. The git-only checks need a repository, so the output says they were skipped.
+## Reading the output
 
-A clean scan prints:
+A clean project prints one line:
 
-```bash
+```text
 ✅ No code that runs on clone, open, or commit in ~/example/project
 ```
 
-A scan with findings prints one table. The detail and the action of a finding print under its title:
+A project with findings prints a table, worst first. Each finding carries what it does and what to do about it:
 
 ```text
 ┌─────────────┬───────────────────────┬────────────────────────────────────────┐
@@ -59,41 +54,83 @@ A scan with findings prints one table. The detail and the action of a finding pr
 → 1 risky item: 1 critical
 ```
 
-The table is at most 80 columns wide. The output uses color when stdout is a terminal. Set `NO_COLOR=1` to turn the color off.
+| Severity | Means |
+| --- | --- |
+| 🚨 CRITICAL | Code runs on clone, checkout, open, or install, and you did not ask for it |
+| 🔴 HIGH | Code fetches and then runs something, or sends data off your machine |
+| 🟠 MEDIUM | Code runs on a build or commit step, or a credential is exposed |
+| 🟡 LOW | Worth a look before you trust the project |
+| ⚪ INFO | Informational |
 
 ## What it checks
 
 | Surface | Examples |
 | --- | --- |
-| Git | `core.hooksPath`, `filter.*.smudge`, `alias.*`, hooks in `.git/hooks` or a tracked hooks directory, `.gitattributes`, `.gitmodules` |
-| VS Code | A `tasks.json` task that runs on open or pipes a download into a shell, workspace settings that allow tasks, dev container commands |
-| Node.js | `postinstall` and the other install-time scripts, `.npmrc` `onload-script`, yarn plugins, pre-commit, husky |
+| Git | `core.hooksPath`, `filter.*.smudge`, `diff.external`, shell `alias.*`, hooks in `.git/hooks` or a tracked hooks directory, `.gitattributes`, `.gitmodules` |
+| VS Code | A `tasks.json` task with `runOn: folderOpen`, a task that pipes a download into a shell, workspace settings that allow tasks, dev container lifecycle commands |
+| Node.js | `postinstall`, `prepare` and the other install-time scripts, `.npmrc` `onload-script`, yarn plugins, pre-commit, husky |
 | Shell | `.envrc`, a `Makefile` target, a setup script that downloads or pipes into `sh` |
-| Android | A Gradle script that downloads or runs a command, a `distributionUrl` outside `services.gradle.org`, `execute_process` in CMake, `$(shell` in `Android.mk`, `adb install`, a `.jks` in the tree, a secret in `gradle.properties` |
+| Android | A Gradle script that downloads or runs a command, a `distributionUrl` outside `services.gradle.org`, `execute_process` in CMake, `$(shell` in `Android.mk`, `adb install`, a `.jks` or a secret in `gradle.properties` |
 
-The Android and Gradle checks ignore comments, match on identifier boundaries, and do not treat a plain repository URL or a `RuntimeClasspath` configuration as a risk. See the [local checks docs](docs/local-checks.md).
+Ordinary projects stay quiet: comments, plain repository URLs, and a project's own build commands are not findings. See the [local checks docs](docs/local-checks.md) for what each rule ignores.
 
-Each surface has its own detector file under `internal/scan/`. See the [local checks docs](docs/local-checks.md).
+## Flags
 
-### LLM review (optional)
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `-json` | off | Print findings as JSON, with no color |
+| `-ref` | host default | Branch or tag to scan on a URL target |
+| `-token` | `GITHUB_TOKEN`, then `GH_TOKEN` | Token for a private repository |
+| `-fail-on` | `high` | Lowest severity that exits 1: `low`, `medium`, `high`, `critical`, `none` |
+| `-llm` | off | Add the LLM review pass |
 
-Pass `-llm` to also send the repository execution surface to an OpenAI-compatible endpoint for a second opinion:
+## Use it in CI
+
+Exit code 1 means a finding reached `-fail-on`, and 2 means the scan could not run at all. A GitHub Actions step:
+
+```yaml
+- run: curl -sfL https://github.com/nisrulz/side-eye/releases/latest/download/install.sh | sh
+- run: side-eye --fail-on critical .
+```
+
+Add `-json` when a job should post or store findings instead of printing them for a person. The [reporting docs](docs/reporting.md) have the JSON shape and every exit code.
+
+## LLM review (optional)
+
+`-llm` sends the project's execution surface to an OpenAI-compatible endpoint and asks the model what it would run. It is off by default because it sends repository content to an endpoint you pick.
 
 ```bash
 export SIDE_EYE_LLM_URL=http://localhost:11434/v1
-export SIDE_EYE_LLM_MODEL=llama3.1
+export SIDE_EYE_LLM_MODEL=gemma4:e2b-it-qat
 side-eye -llm .
 ```
 
-`SIDE_EYE_LLM_TOKEN` is optional, so an Ollama endpoint works with no token. Set `SIDE_EYE_LLM_PROMPT_FILE` to a text file to replace the built-in review prompt, and `SIDE_EYE_LLM_TIMEOUT` to `10m` when a local model needs longer than the default 5 minutes. See the [LLM scan docs](docs/llm-scan.md).
+A timeout or a refused connection turns into one note in the report, and the regular checks are never replaced.
 
-- Flags and dispatch: [architecture docs](docs/architecture.md)
-- Severities and exit codes: [reporting docs](docs/reporting.md)
-- Build, test, and make targets: [development docs](docs/development.md)
+The [LLM server docs](docs/llm-servers.md) have the variables, the setup for Ollama, LM Studio, and Unsloth Studio, and when to raise the timeout. [llm-scan.md](docs/llm-scan.md) covers what gets sent to the model and how the pass behaves.
 
-## Docs
+## Limits worth knowing
 
-Developer docs live in [docs/](docs/README.md).
+| Target | What it cannot see |
+| --- | --- |
+| Repository URL | `.git/config` and `.git/hooks`. They exist only after a clone, so use `--fail-on critical` and review the clone command the report prints |
+| ZIP from GitHub | The same, because a GitHub source archive has no `.git`. A ZIP shared by hand can carry one, and it is scanned |
+| Plain directory | No git config or hooks directory, so those checks are skipped and the report says so |
+
+## Developer docs
+
+| Doc | Covers |
+| --- | --- |
+| [architecture.md](docs/architecture.md) | Scan lifecycle and module map |
+| [rules.md](docs/rules.md) | Every git config rule and its severity |
+| [local-checks.md](docs/local-checks.md) | Hooks, attributes, and each worktree check |
+| [remote-scans.md](docs/remote-scans.md) | URL parsing, remote and ZIP sources |
+| [llm-scan.md](docs/llm-scan.md) | What the LLM pass sends, its prompt, and its caps |
+| [llm-servers.md](docs/llm-servers.md) | LLM server setup, environment variables, timeout |
+| [reporting.md](docs/reporting.md) | Findings, output formats, exit codes |
+| [development.md](docs/development.md) | Build, install, test, conventions |
+
+The [developer docs index](docs/dev.md) lists them all with a note on each.
 
 ## License
 
