@@ -71,6 +71,8 @@ func (s *githubSource) hookFiles() []string {
 // list returns every tracked file path from the git tree.
 func (s *githubSource) list() []string { return s.paths }
 
+func (s *githubSource) reportPath(rel string) string { return remoteReportPath(rel) }
+
 func (s *githubSource) apiURL(format string, args ...any) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s%s", s.target.owner, s.target.repo, fmt.Sprintf(format, args...))
 }

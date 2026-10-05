@@ -108,11 +108,16 @@ const maxReadBytes = 8 << 20
 
 // remoteSource gives the checks read-only access to tracked files, to the
 // names of tracked hook files, and to the full file listing in the remote repo.
+// It is also a worktreeSource: a ZIP and a URL scan run the same worktree checks
+// a local scan does, over the tracked path.
 type remoteSource interface {
-	file(path string) []byte
+	worktreeSource
 	hookFiles() []string
-	list() []string
 }
+
+// remoteReportPath is the path a finding carries for a remote or archived file.
+// There is no local path to print, so it is the tracked path itself.
+func remoteReportPath(rel string) string { return rel }
 
 func scanRemote(t *remoteTarget) (remoteSource, []Finding, error) {
 	src, err := newRemoteSource(t)
@@ -142,7 +147,6 @@ func scanRemoteSource(src remoteSource, add func(Finding)) {
 	checkVSCodeSettings(src.file(".vscode/settings.json"), ".vscode/settings.json", add)
 	checkDevcontainer(src.file(".devcontainer/devcontainer.json"), ".devcontainer/devcontainer.json", add)
 	checkDevcontainer(src.file(".devcontainer.json"), ".devcontainer.json", add)
-	checkEnvrc(src.file(".envrc"), ".envrc", add)
 	checkPackageScripts(src.file("package.json"), "package.json", add)
 	checkNpmrc(src.file(".npmrc"), ".npmrc", add)
 	checkPreCommit(src.file(".pre-commit-config.yaml"), ".pre-commit-config.yaml", add)
@@ -161,6 +165,13 @@ func scanRemoteSource(src remoteSource, add func(Finding)) {
 			"Tracked hook file: " + path.Base(hook),
 			"Runs if core.hooksPath points to " + path.Dir(hook) + "; husky install sets this"})
 	}
+
+	// The shell and Android checks run here too. They used to be local-only, so
+	// a ZIP or a URL scan missed a setup script that pipes a download into an
+	// interpreter, and the whole Gradle, CMake, NDK, adb, and keystore surface.
+	// checkEnvrc is left out of the list above: scanShellSource covers it.
+	scanShellSource(src, add)
+	scanAndroidSource(src, add)
 }
 
 func escapePath(p string) string {

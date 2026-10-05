@@ -74,6 +74,8 @@ func (s *zipSource) hookFiles() []string { return s.hooks }
 // list returns every entry name in the archive.
 func (s *zipSource) list() []string { return s.names }
 
+func (s *zipSource) reportPath(rel string) string { return remoteReportPath(rel) }
+
 func (s *zipSource) Close() error { return s.archive.Close() }
 
 func (s *zipSource) hasGitDir() bool {

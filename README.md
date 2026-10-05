@@ -30,8 +30,14 @@ Or point it at a target:
 ```bash
 side-eye ~/example/project              # a directory, with or without git
 side-eye https://github.com/example/project  # a repository URL, without cloning it
+side-eye git@github.com:example/project.git  # an SSH URL works the same way
 side-eye ~/Downloads/project-main.zip  # a ZIP from GitHub or shared by someone
 ```
+
+Every target runs the same worktree checks — the shell, Gradle, CMake, NDK, adb,
+npm, and VS Code surfaces. Only `.git/config` and `.git/hooks` depend on the
+target shape. An SSH URL keeps its SSH form in the clone command the report
+prints.
 
 ## Reading the output
 
@@ -116,6 +122,9 @@ A timeout or a refused connection turns into one note in the report, and the reg
 The [LLM server docs](docs/llm-servers.md) have the variables, the setup for Ollama, LM Studio, and Unsloth Studio, and when to raise the timeout. [llm-scan.md](docs/llm-scan.md) covers what gets sent to the model and how the pass behaves.
 
 ## Limits worth knowing
+
+Everything below is the whole list. Every worktree check runs against a directory,
+a URL, and a ZIP alike.
 
 | Target | What it cannot see |
 | --- | --- |

@@ -82,6 +82,8 @@ func (s *rawSource) list() []string {
 	return paths
 }
 
+func (s *rawSource) reportPath(rel string) string { return remoteReportPath(rel) }
+
 func (s *rawSource) get(u string) []byte {
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {

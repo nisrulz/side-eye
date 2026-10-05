@@ -1,36 +1,36 @@
 package scan
 
 import (
-	"path/filepath"
 	"strings"
 )
 
 // scanShell covers the shell files that run when someone changes into or builds
 // the directory: the direnv file, the Makefile targets, and the setup scripts.
 func scanShell(repo *repoLayout, add func(Finding)) error {
-	root := repo.root
-	at := func(rel string) string { return filepath.Join(root, rel) }
-
-	checkEnvrc(readFile(at(".envrc")), at(".envrc"), add)
-	checkShellSetup(readFile(at("Makefile")), at("Makefile"), add)
-	walkTree(root, func(rel string) {
-		if isSetupScript(rel) {
-			checkShellSetup(readFile(filepath.Join(root, rel)), filepath.Join(root, rel), add)
-		}
-	})
+	scanShellSource(newLocalWorktree(repo), add)
 	return nil
+}
+
+// scanShellSource runs the shell checks against any worktree, so a ZIP and a
+// URL scan report the same setup scripts a local scan does.
+func scanShellSource(src worktreeSource, add func(Finding)) {
+	checkEnvrc(src.file(".envrc"), src.reportPath(".envrc"), add)
+	checkShellSetup(src.file("Makefile"), src.reportPath("Makefile"), add)
+	for _, rel := range src.list() {
+		if isSetupScript(rel) {
+			checkShellSetup(src.file(rel), src.reportPath(rel), add)
+		}
+	}
 }
 
 // isSetupScript reports shell, PowerShell, and batch files at the root or under
 // scripts/. Those run during setup, build, or CI.
 func isSetupScript(rel string) bool {
-	dir, base := filepath.Split(rel)
-	dir = filepath.ToSlash(dir)
-	dir = strings.TrimSuffix(dir, "/")
-	if dir != "" && dir != "scripts" && !strings.HasPrefix(dir, "scripts/") {
+	dir := pathDir(rel)
+	if dir != "." && dir != "scripts" && !strings.HasPrefix(dir, "scripts/") {
 		return false
 	}
-	switch strings.ToLower(filepath.Ext(base)) {
+	switch strings.ToLower(pathExt(pathBase(rel))) {
 	case ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd":
 		return true
 	}

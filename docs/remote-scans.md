@@ -15,24 +15,57 @@ side-eye can scan a repository from a URL without a clone.
 | Field | Meaning |
 | --- | --- |
 | `raw` | The argument as typed |
-| `clone` | HTTPS clone URL |
+| `clone` | The clone URL, kept as typed |
 | `host`, `owner`, `repo` | URL parts |
 | `ref` | Branch or tag |
 | `token` | API token |
+
+`clone` is the argument's own form, not a rewritten HTTPS URL, so an SSH target
+keeps working SSH: `git@github.com:owner/repo.git` clones over SSH and
+`https://github.com/owner/repo.git` over HTTPS. Only when the argument carried no
+scheme does `parseRemoteURL` build an HTTPS URL from the parts. The scan itself
+reads through the API or a raw endpoint either way; `clone` is what the
+`git clone --no-checkout` advice prints.
+
+A `git@host:owner/repo` argument is split at the first colon after the host, so a
+GitLab subgroup survives as the owner: `git@gitlab.com:group/sub/repo.git` gives
+host `gitlab.com` and owner `group/sub`.
 
 ## Source interface
 
 ```go
 type remoteSource interface {
-	file(path string) []byte
+	worktreeSource
 	hookFiles() []string
-	list() []string
 }
 ```
+
+`worktreeSource` in `detectors.go` is the shared read interface every target shape
+provides — a local directory, a ZIP archive, and a remote host alike:
+
+```go
+type worktreeSource interface {
+	file(path string) []byte
+	list() []string
+	reportPath(rel string) string
+}
+```
+
+`reportPath` is the path a finding carries. A local scan holds absolute paths and
+lets the report make them relative again; the other targets print the tracked
+path, since there is no local path to name.
 
 `scanRemoteSource` runs the shared worktree checks against a source.
 `list` returns the full file listing for the optional LLM pass. See [llm-scan.md](llm-scan.md).
 See [local-checks.md](local-checks.md) for the file list.
+
+The shell and Android checks run over `worktreeSource` rather than reading the
+local filesystem directly, which is what puts them on this path. They used to be
+wired to `repoLayout` and `walkTree`, so `scanRemoteSource` never reached them and
+a ZIP or URL scan reported a tree holding a `curl … | sh` setup script, or a
+Gradle script that shells out, as clean.
+`TestScanRemoteSourceRunsTheSameSurfaceAsALocalScan` compares the two paths so the
+gap cannot reopen silently.
 
 ## GitHub source
 

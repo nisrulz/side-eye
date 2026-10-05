@@ -33,6 +33,34 @@ cannot be read at all, because that makes the whole scan untrustworthy.
 
 Adding a surface means writing one file and adding one line to `detectors`.
 
+## Running against a ZIP or a URL
+
+`scanShell` and `scanAndroid` are thin wrappers. The bodies live in
+`scanShellSource` and `scanAndroidSource`, which take a `worktreeSource` instead
+of a `repoLayout`:
+
+```go
+type worktreeSource interface {
+	file(path string) []byte
+	list() []string
+	reportPath(rel string) string
+}
+```
+
+`scanRemoteSource` calls both, so a ZIP and a URL run the same worktree checks a
+directory does. This is why the check bodies are written against the interface and
+not against `readFile` and `walkTree`: a detector that reads the local filesystem
+directly drops out of every other target silently, and the only symptom is that
+a scan of a hostile ZIP comes back clean.
+
+`reportPath` is the one thing the two paths disagree on. A local scan records an
+absolute path and lets `location` print it relative to the root; the other targets
+record the tracked path, since there is no local path to name.
+
+`TestScanRemoteSourceRunsTheSameSurfaceAsALocalScan` in `remote_test.go` runs both
+paths over one set of files and compares finding titles, so a check added to one
+surface and forgotten in the other fails a test instead of reopening the gap.
+
 ## Directory without git
 
 `discoverRepo` accepts any directory. When it finds no `.git` and the directory
@@ -172,3 +200,8 @@ now clean apart from `local.properties`.
 
 `scanRemoteSource` in `remote.go` calls the same `check*` functions for a remote target.
 When you add a worktree check, add the path in the remote function too so the results stay consistent.
+
+The shell and Android surfaces do not need that step: they run over
+`worktreeSource`, so `scanRemoteSource` reaches them by calling `scanShellSource`
+and `scanAndroidSource`. A new check inside either surface is picked up by every
+target automatically. The parity test above is what keeps that true.

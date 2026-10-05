@@ -2,7 +2,6 @@ package scan
 
 import (
 	"path"
-	"path/filepath"
 	"strings"
 )
 
@@ -12,32 +11,38 @@ import (
 //
 // Every check here reads a file, never runs a build.
 func scanAndroid(repo *repoLayout, add func(Finding)) error {
-	root := repo.root
-	at := func(rel string) string { return filepath.Join(root, rel) }
+	scanAndroidSource(newLocalWorktree(repo), add)
+	return nil
+}
 
-	checkGradleWrapper(at("gradle/wrapper/gradle-wrapper.properties"), add)
-	checkGradleProperties(at("gradle.properties"), add)
-	checkSigningConfig(readFile(at("app/build.gradle")), at("app/build.gradle"), add)
-	checkLocalProperties(readFile(at("local.properties")), at("local.properties"), add)
-	checkADB(readFile(at(".vscode/tasks.json")), at(".vscode/tasks.json"), add)
-	checkADB(readFile(at("Makefile")), at("Makefile"), add)
+// scanAndroidSource runs the Android checks against any worktree, so a ZIP and
+// a URL scan report the same Gradle, CMake, NDK, adb, and keystore findings a
+// local scan does. The whole Android surface used to be local-only, so those
+// scans reported a project carrying a hostile build script as clean.
+func scanAndroidSource(src worktreeSource, add func(Finding)) {
+	checkGradleWrapper(src.file("gradle/wrapper/gradle-wrapper.properties"),
+		src.reportPath("gradle/wrapper/gradle-wrapper.properties"), add)
+	checkGradleProperties(src.file("gradle.properties"), src.reportPath("gradle.properties"), add)
+	checkSigningConfig(src.file("app/build.gradle"), src.reportPath("app/build.gradle"), add)
+	checkLocalProperties(src.file("local.properties"), src.reportPath("local.properties"), add)
+	checkADB(src.file(".vscode/tasks.json"), src.reportPath(".vscode/tasks.json"), add)
+	checkADB(src.file("Makefile"), src.reportPath("Makefile"), add)
 
-	walkTree(root, func(rel string) {
-		file := filepath.Join(root, rel)
+	for _, rel := range src.list() {
+		file := src.reportPath(rel)
 		switch base := path.Base(rel); {
 		case isGradleScript(base):
-			checkGradleScript(readFile(file), file, add)
+			checkGradleScript(src.file(rel), file, add)
 		case base == "CMakeLists.txt":
-			checkCMake(readFile(file), file, add)
+			checkCMake(src.file(rel), file, add)
 		case base == "Android.mk" || base == "Android.bp":
-			checkNDKMakefile(readFile(file), file, add)
+			checkNDKMakefile(src.file(rel), file, add)
 		case isKeystore(rel):
 			add(Finding{SeverityHigh, file, 0,
 				"Signing key in the tree",
 				"A keystore lets anyone sign as the app author; keep it out of the project"})
 		}
-	})
-	return nil
+	}
 }
 
 func isGradleScript(base string) bool {
@@ -100,9 +105,8 @@ func checkGradleScript(data []byte, file string, add func(Finding)) {
 
 // checkGradleWrapper reads the distribution the wrapper downloads and runs. A
 // URL on another host means the build runs a distribution the project chose.
-func checkGradleWrapper(file string, add func(Finding)) {
-	data := readFile(file)
-	if data == nil {
+func checkGradleWrapper(data []byte, file string, add func(Finding)) {
+	if len(data) == 0 {
 		return
 	}
 	url := configValue(string(data), "distributionUrl")
@@ -120,8 +124,7 @@ var gradleSecretKeys = []string{
 	"storepassword", "keypassword", "ghp_", "github_token", "api_key", "apikey", "secret",
 }
 
-func checkGradleProperties(file string, add func(Finding)) {
-	data := readFile(file)
+func checkGradleProperties(data []byte, file string, add func(Finding)) {
 	if len(data) == 0 {
 		return
 	}
