@@ -88,10 +88,13 @@ func printReport(w io.Writer, root string, findings []Finding) {
 
 // findingCell builds the text of one finding: the title, then the detail, then
 // the action. Each part is its own line so it prints under the title column.
+// The title and detail come out of the scanned repository, so they are
+// sanitized here: styling is added after, so the only escape codes left in a
+// cell are the ones this file writes.
 func findingCell(f Finding) string {
-	parts := []string{bold(f.Title)}
+	parts := []string{bold(sanitizeText(f.Title))}
 	if f.Detail != "" {
-		parts = append(parts, dim("↳ "+f.Detail))
+		parts = append(parts, dim("↳ "+sanitizeText(f.Detail)))
 	}
 	return strings.Join(append(parts, yellow("👉 "+severityAction(f.Severity))), "\n")
 }
@@ -146,6 +149,9 @@ func printCloneAdvice(w io.Writer, t *remoteTarget) {
 	printCommand(w, "git -C %s checkout", t.repo)
 }
 
+// location prints the file a finding came from. The path comes from the file
+// system or from a remote tree, so a repository can put escape codes in a file
+// name. It is sanitized before printing.
 func location(root string, f Finding) string {
 	path := f.Path
 	if filepath.IsAbs(f.Path) {
@@ -154,9 +160,9 @@ func location(root string, f Finding) string {
 		}
 	}
 	if f.Line > 0 {
-		return fmt.Sprintf("%s:%d", path, f.Line)
+		path = fmt.Sprintf("%s:%d", path, f.Line)
 	}
-	return path
+	return sanitizeText(path)
 }
 
 // severityAction gives the reader one clear next step for a finding.
