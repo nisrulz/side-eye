@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.trash/
+
+# Go
+/side-eye
+*.exe
+*.test
+*.out
+/vendor/
+/dist/
