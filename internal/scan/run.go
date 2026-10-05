@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // runOptions carries the resolved flags, the target, and the streams to each
@@ -23,18 +24,18 @@ type runOptions struct {
 
 // scanFlags holds the flag values exactly as the command line gave them.
 type scanFlags struct {
-	jsonOut bool
-	ref     string
-	token   string
-	failOn  string
-	useLLM  bool
+	jsonOut   bool
+	ref       string
+	tokenFile string
+	failOn    string
+	useLLM    bool
 }
 
 func registerScanFlags(fs *flag.FlagSet) *scanFlags {
 	f := &scanFlags{}
 	fs.BoolVar(&f.jsonOut, "json", false, "print findings as JSON")
 	fs.StringVar(&f.ref, "ref", "", "remote branch or tag to scan (URL scans)")
-	fs.StringVar(&f.token, "token", "", "GitHub token for private repos (default GITHUB_TOKEN or GH_TOKEN)")
+	fs.StringVar(&f.tokenFile, "token-file", "", "read the GitHub token from this file (prefer GITHUB_TOKEN or GH_TOKEN)")
 	fs.StringVar(&f.failOn, "fail-on", "high", "lowest severity that sets exit code 1: low, medium, high, critical, none")
 	fs.BoolVar(&f.useLLM, "llm", false, "run an LLM review pass (needs SIDE_EYE_LLM_URL and SIDE_EYE_LLM_MODEL)")
 	return f
@@ -49,9 +50,14 @@ func (f *scanFlags) toOptions(target string, stdout, stderr *os.File) (runOption
 		return runOptions{}, false
 	}
 
+	token, err := resolveToken(f.tokenFile)
+	if err != nil {
+		failf(stderr, "%v", err)
+		return runOptions{}, false
+	}
+
 	var llmCfg llmConfig
 	if f.useLLM {
-		var err error
 		if llmCfg, err = loadLLMConfig(); err != nil {
 			failf(stderr, "%v", err)
 			return runOptions{}, false
@@ -65,7 +71,7 @@ func (f *scanFlags) toOptions(target string, stdout, stderr *os.File) (runOption
 		llm:       llmCfg,
 		useLLM:    f.useLLM,
 		ref:       f.ref,
-		token:     resolveToken(f.token),
+		token:     token,
 		stdout:    stdout,
 		stderr:    stderr,
 	}, true
@@ -74,6 +80,9 @@ func (f *scanFlags) toOptions(target string, stdout, stderr *os.File) (runOption
 func printUsage(fs *flag.FlagSet, stderr io.Writer) {
 	fmt.Fprintln(stderr, "side-eye scans a git repository for code that runs on checkout, commit, or open.")
 	fmt.Fprintln(stderr, "It reads files only and never executes git or any hook.")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "For a private repo, put the token in GITHUB_TOKEN or GH_TOKEN rather than on the")
+	fmt.Fprintln(stderr, "command line, where any process on this machine can read it from ps.")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Usage: side-eye [flags] [path | repo-url | zip-file]")
 	fmt.Fprintln(stderr)
@@ -206,12 +215,22 @@ func runRemote(opts runOptions) int {
 	return exitCodeFor(findings, opts.threshold)
 }
 
-func resolveToken(flagValue string) string {
-	if flagValue != "" {
-		return flagValue
+// resolveToken returns the GitHub token for a private remote scan.
+//
+// There is deliberately no -token flag. A secret on the command line is visible
+// to every other process on the machine through ps, it lands in shell history,
+// and CI writes it into the log. The environment is the safer channel and was
+// already the default, so the flag only added a way to leak it.
+func resolveToken(tokenFile string) (string, error) {
+	if tokenFile != "" {
+		data, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("read -token-file: %w", err)
+		}
+		return strings.TrimSpace(string(data)), nil
 	}
 	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
-		return v
+		return v, nil
 	}
-	return os.Getenv("GH_TOKEN")
+	return strings.TrimSpace(os.Getenv("GH_TOKEN")), nil
 }

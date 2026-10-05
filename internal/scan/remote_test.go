@@ -1,6 +1,8 @@
 package scan
 
 import (
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,6 +67,8 @@ type fakeSource struct {
 func (f fakeSource) file(p string) []byte { return f.files[p] }
 func (f fakeSource) hookFiles() []string  { return f.hooks }
 
+func (f fakeSource) reportPath(rel string) string { return remoteReportPath(rel) }
+
 func (f fakeSource) list() []string {
 	paths := make([]string, 0, len(f.files))
 	for p := range f.files {
@@ -122,5 +126,73 @@ func TestReadFileMissing(t *testing.T) {
 	}
 	if string(readFile(p)) != "x" {
 		t.Error("readFile returned wrong content")
+	}
+}
+
+// TestResolveTokenPrefersTheEnvironment checks a token reaches the scan without
+// ever passing through argv, where ps and shell history would expose it.
+func TestResolveTokenPrefersTheEnvironment(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "from-github-token")
+	t.Setenv("GH_TOKEN", "from-gh-token")
+
+	got, err := resolveToken("")
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	if got != "from-github-token" {
+		t.Errorf("token = %q, want GITHUB_TOKEN to win", got)
+	}
+
+	t.Setenv("GITHUB_TOKEN", "")
+	got, err = resolveToken("")
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	if got != "from-gh-token" {
+		t.Errorf("token = %q, want the GH_TOKEN fallback", got)
+	}
+
+	t.Setenv("GH_TOKEN", "  ")
+	got, err = resolveToken("")
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	if got != "" {
+		t.Errorf("token = %q, want empty for a whitespace-only value", got)
+	}
+}
+
+func TestResolveTokenFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+	// A token file usually ends with a newline; it must not become part of the
+	// header value.
+	writeFile(t, path, "ghp_fromfile\n")
+
+	got, err := resolveToken(path)
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	if got != "ghp_fromfile" {
+		t.Errorf("token = %q, want %q", got, "ghp_fromfile")
+	}
+
+	if _, err := resolveToken(filepath.Join(dir, "missing")); err == nil {
+		t.Error("resolveToken accepted a missing -token-file")
+	}
+}
+
+// TestNoTokenFlagExists is the guard for the leak itself: the flag is gone, so
+// there is no way to hand a secret to the process through argv.
+func TestNoTokenFlagExists(t *testing.T) {
+	fs := flag.NewFlagSet("side-eye", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerScanFlags(fs)
+
+	if f := fs.Lookup("token"); f != nil {
+		t.Errorf("-token still exists, so a secret can be read from ps: %q", f.Usage)
+	}
+	if fs.Lookup("token-file") == nil {
+		t.Error("-token-file must exist as the file-based replacement")
 	}
 }

@@ -82,9 +82,13 @@ Ordinary projects stay quiet: comments, plain repository URLs, and a project's o
 | --- | --- | --- |
 | `-json` | off | Print findings as JSON, with no color |
 | `-ref` | host default | Branch or tag to scan on a URL target |
-| `-token` | `GITHUB_TOKEN`, then `GH_TOKEN` | Token for a private repository |
+| `-token-file` | none | Read the token for a private repository from this file |
 | `-fail-on` | `high` | Lowest severity that exits 1: `low`, `medium`, `high`, `critical`, `none` |
 | `-llm` | off | Add the LLM review pass |
+
+For a private repository, set `GITHUB_TOKEN` or `GH_TOKEN` rather than passing a
+token on the command line, where any process on the machine can read it out of
+`ps`.
 
 ## Use it in CI
 

@@ -15,11 +15,16 @@ Flags:
 | --- | --- | --- |
 | `-json` | `false` | Print findings as JSON |
 | `-ref` | `""` | Remote branch or tag to scan |
-| `-token` | `""` | GitHub token for private repos |
+| `-token-file` | `""` | Read the GitHub token from this file |
 | `-fail-on` | `high` | Lowest severity that returns exit code 1 |
 | `-llm` | `false` | Run the optional LLM review pass. See [llm-scan.md](llm-scan.md) |
 
-`resolveToken` reads the flag first, then `GITHUB_TOKEN`, then `GH_TOKEN`.
+`resolveToken` reads `-token-file` first, then `GITHUB_TOKEN`, then `GH_TOKEN`.
+
+There is no `-token` flag on purpose. A secret on the command line is readable
+by every other process on the machine through `ps`, it lands in shell history, and
+CI writes it into the log. `-token-file` covers the case where a secret has to
+come from somewhere other than the environment without putting it in argv.
 
 ## Local scan lifecycle
 
