@@ -23,7 +23,7 @@ func scanGit(repo *repoLayout, add func(Finding)) error {
 	}
 
 	configPath := filepath.Join(repo.gitDir, "config")
-	entries, err := parseGitConfigTree(configPath)
+	entries, err := parseGitConfigTree(configPath, repo.root)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}

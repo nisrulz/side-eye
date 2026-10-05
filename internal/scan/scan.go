@@ -74,15 +74,30 @@ func isGitDir(path string) bool {
 }
 
 // hooksDir returns the directory git reads hooks from, honouring core.hooksPath.
+//
+// A hooksPath that resolves outside the scanned tree is ignored and the default
+// is used. The value comes out of a repository-controlled .git/config, and
+// scanHooks lists the directory it is given, so an absolute path or a `../`
+// chain would turn a scan into a probe of the local filesystem. The ZIP path
+// already refuses those, in zipHooksDir; this keeps the local path consistent
+// with it.
 func (r *repoLayout) hooksDir(entries []gitConfigEntry) string {
 	for _, e := range entries {
-		if strings.EqualFold(e.Section, "core") && strings.EqualFold(e.Key, "hooksPath") {
-			p := strings.TrimSpace(e.Value)
-			if filepath.IsAbs(p) {
-				return filepath.Clean(p)
-			}
-			return filepath.Join(r.root, p)
+		if !strings.EqualFold(e.Section, "core") || !strings.EqualFold(e.Key, "hooksPath") {
+			continue
 		}
+		if hooks, ok := containedPath(r.root, r.root, e.Value); ok {
+			return hooks
+		}
+		return r.defaultHooksDir()
+	}
+	return r.defaultHooksDir()
+}
+
+// defaultHooksDir is where git looks when core.hooksPath is unset or unusable.
+func (r *repoLayout) defaultHooksDir() string {
+	if r.gitDir == "" {
+		return ""
 	}
 	return filepath.Join(r.gitDir, "hooks")
 }

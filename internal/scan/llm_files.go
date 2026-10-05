@@ -257,7 +257,7 @@ func localHooksDir(repo *repoLayout) string {
 	if repo.gitDir == "" {
 		return ""
 	}
-	entries, err := parseGitConfigTree(filepath.Join(repo.gitDir, "config"))
+	entries, err := parseGitConfigTree(filepath.Join(repo.gitDir, "config"), repo.root)
 	if err != nil {
 		return ""
 	}

@@ -119,6 +119,140 @@ func TestIncludeFileIsScanned(t *testing.T) {
 	}
 }
 
+// TestIncludeOutsideTheTreeIsNotFollowed checks the scanner does not read files
+// the user never pointed it at. A repository can ship its own .git/config, so
+// `include.path` is attacker-controlled; an absolute path or a `../` chain used
+// to send the scanner off the tree. The directive is still reported, so nothing
+// is hidden from the reader.
+func TestIncludeOutsideTheTreeIsNotFollowed(t *testing.T) {
+	for name, inc := range map[string]string{
+		"absolute":      "/etc/passwd",
+		"home":          "~/.gitconfig",
+		"parent":        "../../../../../../etc/gitconfig",
+		"parent once":   "../outside.cfg",
+		"dot dot mid":   "sub/../../outside.cfg",
+		"leading slash": "/tmp/evil.cfg",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The escape target is a real file outside the tree, holding a key
+			// that would be CRITICAL if it were read.
+			outside := filepath.Join(t.TempDir(), "outside.cfg")
+			writeFile(t, outside, "[core]\n\tsshCommand = sh -c bad\n")
+			inc = strings.ReplaceAll(inc, "/etc/gitconfig", outside)
+
+			root := makeRepo(t, "[include]\n\tpath = "+inc+"\n")
+			findings := scan(t, root)
+
+			if hasTitle(findings, "core.sshCommand") {
+				t.Errorf("include %q escaped the tree: %+v", inc, findings)
+			}
+			if !hasTitle(findings, "include.path") {
+				t.Errorf("the rejected include must still be reported: %+v", titles(findings))
+			}
+		})
+	}
+}
+
+// TestIncludeInsideTheTreeStillResolves checks the bound did not break the
+// ordinary cases: a sibling, a subdirectory, and a chain.
+func TestIncludeInsideTheTreeStillResolves(t *testing.T) {
+	root := makeRepo(t, "[include]\n\tpath = conf/extra.cfg\n")
+	writeFile(t, filepath.Join(root, ".git", "conf", "extra.cfg"), "[alias]\n\tco = !echo hi\n")
+
+	if findings := scan(t, root); !hasTitle(findings, "alias.co") {
+		t.Errorf("included config not scanned: %+v", titles(findings))
+	}
+}
+
+// TestHooksPathOutsideTheTreeIsIgnored checks core.hooksPath cannot point the
+// hook scan at an arbitrary directory. scanHooks lists whatever it is given, so
+// an unconfined path turns a scan into a filesystem probe.
+func TestHooksPathOutsideTheTreeIsIgnored(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "pre-commit"), "#!/bin/sh\nsh .payload\n")
+
+	for name, hooksPath := range map[string]string{
+		"absolute": outside,
+		"parent":   filepath.Join("..", filepath.Base(outside)),
+		"home":     "~/.local/share/side-eye",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := makeRepo(t, "[core]\n\thooksPath = "+hooksPath+"\n")
+			findings := scan(t, root)
+
+			if hasTitlePrefix(findings, "Active git hook") {
+				t.Errorf("hooksPath %q scanned a directory outside the tree: %+v", hooksPath, titles(findings))
+			}
+			// The configured value is still reported, so the reader sees it.
+			if !hasTitle(findings, "core.hooksPath") {
+				t.Errorf("the out-of-tree hooksPath must still be reported: %+v", titles(findings))
+			}
+		})
+	}
+}
+
+// TestHooksPathInsideTheTreeStillResolves checks a normal relative
+// core.hooksPath keeps working.
+func TestHooksPathInsideTheTreeStillResolves(t *testing.T) {
+	root := makeRepo(t, "[core]\n\thooksPath = .githooks\n")
+	writeFile(t, filepath.Join(root, ".githooks", "post-checkout"), "#!/bin/sh\nsh .payload\n")
+
+	if findings := scan(t, root); !hasTitlePrefix(findings, "Active git hook") {
+		t.Errorf("relative hooksPath not scanned: %+v", titles(findings))
+	}
+}
+
+func TestContainedPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".git")
+	writeFile(t, dir, "[core]\n")
+
+	for name, c := range map[string]struct {
+		value string
+		ok    bool
+	}{
+		"sibling":     {"extra.cfg", true},
+		"subdir":      {filepath.Join("conf", "extra.cfg"), true},
+		"dot slash":   {"./extra.cfg", true},
+		"dot dot in":  {"conf/../extra.cfg", true},
+		"dot dot out": {"../extra.cfg", true}, // back into the tree root from .git
+		"absolute":    {"/etc/passwd", false},
+		"home":        {"~/.gitconfig", false},
+		"parent":      {"../../outside.cfg", false},
+		"deep parent": {"../../../../etc/passwd", false},
+		"empty":       {"  ", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := containedPath(root, dir, c.value)
+			if ok != c.ok {
+				t.Fatalf("containedPath(%q) ok = %v, want %v", c.value, ok, c.ok)
+			}
+			if ok && !underRoot(root, got) {
+				t.Errorf("containedPath(%q) = %q, which is outside %q", c.value, got, root)
+			}
+		})
+	}
+}
+
+// TestUnderRootRejectsSiblingWithSharedPrefix checks the containment test does
+// not do a plain prefix match: /repo-evil is not inside /repo.
+func TestUnderRootRejectsSiblingWithSharedPrefix(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	writeFile(t, root, "[core]\n")
+	sibling := root + "-evil"
+	writeFile(t, sibling, "[core]\n")
+
+	if underRoot(root, sibling) {
+		t.Errorf("underRoot(%q, %q) = true, want false", root, sibling)
+	}
+	if !underRoot(root, root) {
+		t.Errorf("underRoot must accept the root itself")
+	}
+	if !underRoot(root, filepath.Join(root, ".git", "config")) {
+		t.Errorf("underRoot must accept a path inside the root")
+	}
+}
+
 func TestGitattributesFilter(t *testing.T) {
 	root := makeRepo(t, "[core]\n\trepositoryformatversion = 0\n")
 	writeFile(t, filepath.Join(root, ".gitattributes"), "*.txt filter=evil\n")

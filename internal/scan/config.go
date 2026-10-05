@@ -81,9 +81,20 @@ func parseGitConfigReader(r io.Reader, path string) ([]gitConfigEntry, error) {
 
 // parseGitConfigTree follows include.path and includeIf.*.path directives up to
 // a fixed depth, so keys smuggled into an included file are still inspected.
-func parseGitConfigTree(path string) ([]gitConfigEntry, error) {
+//
+// An include only resolves inside treeRoot, not inside the git directory. A
+// repository can ship its own .git/config, and without this bound
+// `include.path = /etc/passwd` or a run of `../` would send the scanner reading
+// files the user never pointed it at. A directive that reaches outside is still
+// reported by evalInclude, so the scan does not quietly drop it.
+func parseGitConfigTree(configPath, treeRoot string) ([]gitConfigEntry, error) {
 	seen := map[string]bool{}
 	var all []gitConfigEntry
+
+	root, err := filepath.Abs(treeRoot)
+	if err != nil {
+		return nil, err
+	}
 
 	var walk func(string, int) error
 	walk = func(p string, depth int) error {
@@ -110,9 +121,9 @@ func parseGitConfigTree(path string) ([]gitConfigEntry, error) {
 			if !isIncludeEntry(e) {
 				continue
 			}
-			inc := e.Value
-			if !filepath.IsAbs(inc) {
-				inc = filepath.Join(dir, inc)
+			inc, ok := containedPath(root, dir, e.Value)
+			if !ok {
+				continue
 			}
 			if err := walk(inc, depth+1); err != nil {
 				continue
@@ -121,8 +132,48 @@ func parseGitConfigTree(path string) ([]gitConfigEntry, error) {
 		return nil
 	}
 
-	err := walk(path, 0)
+	err = walk(configPath, 0)
 	return all, err
+}
+
+// containedPath resolves an include.path or a hooks directory against the
+// directory holding the config that named it, and returns it only when the
+// result stays under root.
+//
+// It reports false for an absolute path, a home-relative path, and any `../`
+// chain that climbs out of the tree. Git honours all three; this scanner does
+// not, because it reads files on the machine running it and the machine is not
+// part of what the user asked to scan.
+func containedPath(root, dir, value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if filepath.IsAbs(value) || strings.HasPrefix(value, "~") {
+		return "", false
+	}
+	abs, err := filepath.Abs(filepath.Join(dir, value))
+	if err != nil {
+		return "", false
+	}
+	if !underRoot(root, abs) {
+		return "", false
+	}
+	return abs, true
+}
+
+// underRoot reports if path is root or sits below it. A prefix match on the
+// string would accept a sibling like /repo-evil for root /repo, so the check
+// goes through filepath.Rel.
+func underRoot(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return !filepath.IsAbs(rel)
 }
 
 func isIncludeEntry(e gitConfigEntry) bool {
