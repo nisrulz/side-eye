@@ -39,7 +39,7 @@ side-eye -llm https://github.com/example/project
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `SIDE_EYE_LLM_URL` | yes | OpenAI-compatible base URL. A base URL or the full completions URL both work |
+| `SIDE_EYE_LLM_URL` | yes | OpenAI-compatible base URL. A base URL or the full completions URL both work. Must be `https`, or `http` on loopback |
 | `SIDE_EYE_LLM_MODEL` | yes | Model name as the endpoint knows it |
 | `SIDE_EYE_LLM_TOKEN` | no | Bearer token. Empty sends no `Authorization` header |
 | `SIDE_EYE_LLM_PROMPT_FILE` | no | Path to a text file replacing the review prompt. Empty or missing keeps the default |
@@ -47,6 +47,12 @@ side-eye -llm https://github.com/example/project
 
 `-llm` with a missing URL or model prints an error and returns exit code 2.
 Without `-llm`, side-eye never reads these variables and never calls the network.
+
+`http://` is refused for any host that is not loopback. The token travels in the
+`Authorization` header, so a cleartext endpoint hands it to anyone on the path.
+Loopback is allowed because that is the local-server setup above, and the traffic
+never leaves the machine. A hostname that does not resolve is not assumed to be
+local.
 
 ## Timeout
 
@@ -68,3 +74,19 @@ when the content has to stay on the machine.
 
 The token goes in the request header only, side-eye never prints it, and the
 model output is parsed as data and never executed.
+
+## Untrusted repository text
+
+The repository text is data, not instructions, and the prompt is built to say so.
+`llmSystemPrompt` carries that notice, which is the part of the exchange a file in
+the repository cannot reach: `SIDE_EYE_LLM_PROMPT_FILE` is read from the
+environment, never from the tree, so no file can replace the system prompt.
+`buildLLMPrompt` prefixes every line of untrusted content and closes each run with
+a fence name generated for that run, so a file containing `</file>` cannot end its
+own block and continue as instructions.
+
+Neither measure makes the pass authoritative. A model can still be talked into
+ignoring the notice, so a hostile repository may still manage to have a finding
+fabricated or dropped. The deterministic checks are what the verdict rests on:
+the LLM pass only ever adds findings to them, and a finding it invents is one the
+reader has to judge like any other.
