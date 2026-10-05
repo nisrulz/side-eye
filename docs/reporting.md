@@ -6,11 +6,17 @@
 
 | Field | JSON | Notes |
 | --- | --- | --- |
-| `Severity` | `severity` | Integer. Marshals through `String`. |
+| `Severity` | `severity` | Name: `INFO`, `LOW`, `MEDIUM`, `HIGH`, or `CRITICAL`. `MarshalJSON` writes the name, not the number, so the contract survives a reordering of the constants. |
 | `Path` | `path` | Absolute for local scans, repo-relative for remote scans |
 | `Line` | `line` | Omitted when 0 |
 | `Title` | `title` | Short label |
 | `Detail` | `detail` | Omitted when empty |
+
+`UnmarshalJSON` reads the name back, so the output round-trips.
+
+`parseSeverity` reads a severity name. `parseFailOn` additionally accepts `none`,
+which is a `-fail-on` threshold rather than a severity, so a finding can never
+carry it.
 
 `highestSeverity` returns the worst finding in a set.
 

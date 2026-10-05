@@ -44,7 +44,7 @@ func TestMain(m *testing.M) {
 }
 
 type finding struct {
-	Severity int    `json:"severity"`
+	Severity string `json:"severity"`
 	Path     string `json:"path"`
 	Line     int    `json:"line"`
 	Title    string `json:"title"`

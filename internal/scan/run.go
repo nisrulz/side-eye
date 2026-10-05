@@ -43,7 +43,7 @@ func registerScanFlags(fs *flag.FlagSet) *scanFlags {
 // toOptions validates the flag values and resolves them into runOptions. It
 // returns false after it has written the reason to stderr.
 func (f *scanFlags) toOptions(target string, stdout, stderr *os.File) (runOptions, bool) {
-	threshold, ok := parseSeverity(f.failOn)
+	threshold, ok := parseFailOn(f.failOn)
 	if !ok {
 		failf(stderr, "Invalid -fail-on value %q", f.failOn)
 		return runOptions{}, false

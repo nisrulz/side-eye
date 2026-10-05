@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,7 +242,7 @@ func TestDiscoverWorktreeGitFile(t *testing.T) {
 }
 
 func TestParseSeverity(t *testing.T) {
-	for _, want := range []string{"low", "medium", "high", "critical", "none"} {
+	for _, want := range []string{"low", "medium", "high", "critical"} {
 		if _, ok := parseSeverity(want); !ok {
 			t.Errorf("parseSeverity(%q) failed", want)
 		}
@@ -249,6 +250,67 @@ func TestParseSeverity(t *testing.T) {
 	if _, ok := parseSeverity("bogus"); ok {
 		t.Error("parseSeverity accepted bogus value")
 	}
+	// `none` is a -fail-on threshold, not a severity, so a severity name from a
+	// finding can never be "none".
+	if _, ok := parseSeverity("none"); ok {
+		t.Error("parseSeverity accepted none as a severity")
+	}
+}
+
+func TestParseFailOn(t *testing.T) {
+	for _, want := range []string{"low", "medium", "high", "critical", "none"} {
+		if _, ok := parseFailOn(want); !ok {
+			t.Errorf("parseFailOn(%q) failed", want)
+		}
+	}
+	if _, ok := parseFailOn("bogus"); ok {
+		t.Error("parseFailOn accepted bogus value")
+	}
+	got, _ := parseFailOn("none")
+	if got <= SeverityCritical {
+		t.Errorf("parseFailOn(none) = %d, want above critical so nothing fails", got)
+	}
+}
+
+// TestSeverityMarshalsAsName checks the JSON contract. The docs promise the
+// name; the code used to emit the bare integer, which ties every consumer to the
+// order of the constants.
+func TestSeverityMarshalsAsName(t *testing.T) {
+	for _, want := range []string{
+		"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL",
+	} {
+		data, err := json.Marshal(Finding{Severity: parseSeverityMust(want), Title: "x"})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(data), `"severity":"`+want+`"`) {
+			t.Errorf("severity %s marshalled as %s", want, data)
+		}
+	}
+}
+
+func TestSeverityUnmarshalsFromName(t *testing.T) {
+	var f Finding
+	if err := json.Unmarshal([]byte(`{"severity":"critical","title":"x"}`), &f); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if f.Severity != SeverityCritical {
+		t.Errorf("severity = %v, want CRITICAL", f.Severity)
+	}
+	if err := json.Unmarshal([]byte(`{"severity":"bogus"}`), &f); err == nil {
+		t.Error("unmarshal accepted an unknown severity")
+	}
+	if err := json.Unmarshal([]byte(`{"severity":3}`), &f); err == nil {
+		t.Error("unmarshal accepted a numeric severity")
+	}
+}
+
+func parseSeverityMust(name string) Severity {
+	s, ok := parseSeverity(name)
+	if !ok {
+		panic(name)
+	}
+	return s
 }
 
 func TestHookDetailByMode(t *testing.T) {
