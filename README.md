@@ -39,6 +39,8 @@ npm, and VS Code surfaces. Only `.git/config` and `.git/hooks` depend on the
 target shape. An SSH URL keeps its SSH form in the clone command the report
 prints.
 
+![Screenshot](img/sc.png)
+
 ## Reading the output
 
 A clean project prints one line:
