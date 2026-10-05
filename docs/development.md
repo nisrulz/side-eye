@@ -59,6 +59,21 @@ It then records build provenance for the archives and the checksum file.
 The workflow pins every action and the GoReleaser version.
 The installer aborts when the matching archive checksum is missing or invalid.
 
+### What the installer verifies
+
+The checksum alone proves the download arrived intact, not that it came from this
+project's release: `checksums.txt` is fetched from the same release over the same
+channel, so anyone who can replace the archive can replace the checksum beside it.
+The installer therefore also verifies the SLSA build provenance the workflow
+publishes, with `gh attestation verify`, and aborts when it does not match.
+
+`gh` is not assumed to be installed. A missing CLI prints a warning naming the
+command to run by hand rather than passing silently, and
+`SIDE_EYE_INSTALL_SKIP_ATTESTATION=1` skips the check for an air-gapped mirror.
+The installer also requires exactly one file named `side-eye` in the archive,
+instead of taking the first match, so a second copy cannot be installed by
+filesystem order.
+
 ## Tests
 
 Unit tests live in `internal/scan/`: `scan_test.go`, `remote_test.go`, `zip_test.go`, `llm_test.go`, `llm_files_test.go`, and `spinner_test.go`.

@@ -63,6 +63,32 @@ if [ "$actual" != "$expected" ]; then
 fi
 echo "  ✓ Checksum verified"
 
+# The checksum proves the archive arrived intact. It does not prove it came from
+# this project's release, because checksums.txt is fetched from the same release
+# over the same channel: anyone who can replace the archive can replace the
+# checksum beside it. The release workflow publishes SLSA build provenance, and
+# this is where it gets checked.
+#
+# `gh` is not assumed to be installed, so a missing CLI is a warning rather than a
+# failure. It is not silently skipped: the command to verify by hand is printed,
+# and it is not skipped at all when gh is present.
+if [ "${SIDE_EYE_INSTALL_SKIP_ATTESTATION:-}" = "1" ]; then
+  echo "  ! Provenance check skipped (SIDE_EYE_INSTALL_SKIP_ATTESTATION=1)"
+  echo "    verify by hand: gh attestation verify $archive --repo $REPO"
+elif ! command -v gh >/dev/null 2>&1; then
+  echo "  ! Could not verify build provenance: the gh CLI is not installed."
+  echo "    The checksum above only proves the download arrived intact."
+  echo "    To check who built this archive, run:"
+  echo "      gh attestation verify $archive --repo $REPO"
+elif ! gh attestation verify "$tmpdir/$archive" --repo "$REPO" >/dev/null 2>&1; then
+  echo "  ! Build provenance check failed. Aborting."
+  echo "    This archive was not built by the $REPO release workflow."
+  echo "    Inspect it with: gh attestation verify $archive --repo $REPO"
+  exit 1
+else
+  echo "  ✓ Build provenance verified"
+fi
+
 # Extract (binary may be in a versioned subdirectory)
 tar xzf "$tmpdir/$archive" -C "$tmpdir"
 
@@ -75,7 +101,15 @@ if [ -d "$dst" ]; then
   exit 1
 fi
 
-bin_file=$(find "$tmpdir" -name "$BIN" -type f -print -quit)
+# An exact count, not `find -print -quit`: with two files named side-eye in one
+# archive the first match would win by filesystem order, and the one that ran is
+# not the one anyone reviewed.
+bin_count=$(find "$tmpdir" -type f -name "$BIN" | wc -l | tr -d ' ')
+if [ "$bin_count" != "1" ]; then
+  echo "  ! Expected exactly one $BIN in the release archive, found $bin_count"
+  exit 1
+fi
+bin_file=$(find "$tmpdir" -type f -name "$BIN")
 if [ -z "$bin_file" ]; then
   echo "  ! Could not find $BIN in the release archive"
   exit 1
